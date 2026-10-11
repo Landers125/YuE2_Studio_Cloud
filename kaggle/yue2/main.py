@@ -279,7 +279,7 @@ def restore_yue_engine(work_dir: Path) -> Path:
                 pass
 
     logger.info("Successfully built yue-server with LoRA support: %s", target_bin)
-    threading.Thread(target=save_dataset_version, args=(work_dir, target_bin), daemon=True).start()
+    save_dataset_version(work_dir, target_bin)
     return target_bin
 
 
@@ -1336,6 +1336,8 @@ def main() -> None:
     logger.info("[+] YuE2 Studio Public URL: %s", tunnel_url)
     notify_ready(tunnel_url)
 
+    global LAST_ACTIVITY_TIME
+    LAST_ACTIVITY_TIME = time.time()
     last_heartbeat = time.time()
     last_signal_check = time.time()
     try:
