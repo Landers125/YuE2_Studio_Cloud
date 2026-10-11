@@ -93,7 +93,9 @@ def detect_environment() -> tuple[Path, int]:
 def check_engine_supports_adapters(bin_path: Path) -> bool:
     """Verifies that yue-server binary supports --adapters CLI argument."""
     try:
-        res = subprocess.run([str(bin_path), "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        env = dict(os.environ)
+        env["LD_LIBRARY_PATH"] = f"{bin_path.parent}:{env.get('LD_LIBRARY_PATH', '')}"
+        res = subprocess.run([str(bin_path), "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5, env=env)
         return "--adapters" in (res.stdout + res.stderr)
     except Exception:
         return False
