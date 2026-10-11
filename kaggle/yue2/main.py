@@ -631,6 +631,7 @@ def notify_ready(tunnel_url: str, username: str = "jungterdai") -> None:
                     "Title": "YuE2 Studio Ready",
                     "Tags": "musical_note,guitar",
                     "Priority": "high",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                 },
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -641,7 +642,11 @@ def notify_ready(tunnel_url: str, username: str = "jungterdai") -> None:
 
     try:
         form = urllib.parse.urlencode({"content": tunnel_url}).encode("utf-8")
-        req = urllib.request.Request(f"https://cl1p.net/{topic}", data=form)
+        req = urllib.request.Request(
+            f"https://cl1p.net/{topic}",
+            data=form,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
         with urllib.request.urlopen(req, timeout=5) as resp:
             if resp.status == 200:
                 logger.info("[*] Published to cl1p.net: %s", topic)
