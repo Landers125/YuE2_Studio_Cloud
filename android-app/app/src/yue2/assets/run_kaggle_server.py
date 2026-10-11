@@ -90,14 +90,86 @@ def detect_environment() -> tuple[Path, int]:
     return work_dir, gpu_count
 
 
+def check_engine_supports_adapters(bin_path: Path) -> bool:
+    """Verifies that yue-server binary supports --adapters CLI argument."""
+    try:
+        res = subprocess.run([str(bin_path), "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        return "--adapters" in (res.stdout + res.stderr)
+    except Exception:
+        return False
+
+
+def save_dataset_version(work_dir: Path, target_bin: Path) -> None:
+    """Publishes updated yue-server binary with LoRA support to Kaggle dataset."""
+    try:
+        logger.info("Preparing dataset update for 'jungterdai/yue2-q8-models'...")
+        k_dir = Path.home() / ".kaggle"
+        k_dir.mkdir(parents=True, exist_ok=True)
+        cred = {"username": "jungterdai", "key": "a9c86217f94f6a3477c246d4c556a579"}
+        (k_dir / "kaggle.json").write_text(json.dumps(cred), encoding="utf-8")
+        try:
+            (k_dir / "kaggle.json").chmod(0o600)
+        except Exception:
+            pass
+        os.environ["KAGGLE_USERNAME"] = cred["username"]
+        os.environ["KAGGLE_KEY"] = cred["key"]
+
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        api = KaggleApi()
+        api.authenticate()
+
+        upload_dir = work_dir / "dataset_upload"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "id": "jungterdai/yue2-q8-models",
+            "title": "YuE2 Q8 Models and Engine",
+            "subtitle": "YuE2 Q8 Models and Native Engine with LoRA Adapters Support",
+            "description": "Pre-quantized YuE2 Q8 GGUF weights with native C++/CUDA yue-server supporting LoRA adapters.",
+            "resources": []
+        }
+        (upload_dir / "dataset-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+        # Copy new binary and libraries
+        shutil.copy2(target_bin, upload_dir / "yue-server")
+        (upload_dir / "yue-server").chmod(0o755)
+        for so in work_dir.glob("lib*.so*"):
+            if so.is_file() and not so.is_symlink():
+                shutil.copy2(so, upload_dir / so.name)
+
+        # Retain model weights via symlink / copy from /kaggle/input
+        kaggle_input = Path("/kaggle/input")
+        for fname in ["YuE2-3B-Q8_0.gguf", "YuE2-Vae-F32.gguf"]:
+            matches = list(kaggle_input.rglob(fname)) if kaggle_input.exists() else []
+            valid = [m for m in matches if m.is_file() and m.stat().st_size > 1024 * 1024]
+            if valid:
+                dst = upload_dir / fname
+                if not dst.exists():
+                    try:
+                        dst.symlink_to(valid[0])
+                    except Exception:
+                        shutil.copy2(valid[0], dst)
+
+        logger.info("Uploading updated engine and models to dataset 'jungterdai/yue2-q8-models'...")
+        api.dataset_create_version(
+            str(upload_dir),
+            version_notes="Build yue-server from adapters branch with native LoRA support (sm_75 T4)",
+            dir_mode="skip",
+            quiet=False,
+        )
+        logger.info("✓ Successfully updated Kaggle dataset jungterdai/yue2-q8-models with new LoRA engine!")
+    except Exception as exc:
+        logger.warning("Could not auto-update Kaggle dataset: %s", exc)
+
+
 def restore_yue_engine(work_dir: Path) -> Path:
-    """Restores pre-compiled yue-server binary and libraries from Kaggle input."""
+    """Restores pre-compiled yue-server from dataset or compiles from source with LoRA support."""
     target_bin = work_dir / "yue-server"
     local_libs = list(work_dir.glob("lib*.so*"))
 
-    if target_bin.exists() and local_libs:
+    if target_bin.exists() and local_libs and check_engine_supports_adapters(target_bin):
         target_bin.chmod(0o755)
-        logger.info("Cached yue-server found at %s", target_bin)
+        logger.info("Cached yue-server with LoRA support found at %s", target_bin)
         return target_bin
 
     kaggle_input = Path("/kaggle/input")
@@ -106,7 +178,7 @@ def restore_yue_engine(work_dir: Path) -> Path:
             if candidate.is_file():
                 cand_dir = candidate.parent
                 cand_libs = list(cand_dir.glob("lib*.so*"))
-                if cand_libs:
+                if cand_libs and check_engine_supports_adapters(candidate):
                     shutil.copy2(candidate, target_bin)
                     target_bin.chmod(0o755)
                     for lib in cand_libs:
@@ -122,10 +194,10 @@ def restore_yue_engine(work_dir: Path) -> Path:
                                     logger.info("Patched %s for CUDA 12 compatibility.", c_lib.name)
                             except Exception as p_exc:
                                 logger.warning("Could not patch %s: %s", c_lib.name, p_exc)
-                    logger.info("Restored yue-server from Kaggle Input: %s", candidate)
+                    logger.info("Restored yue-server with LoRA support from Kaggle Input: %s", candidate)
                     return target_bin
 
-    logger.info("Pre-compiled yue-server not found in dataset. Building from source...")
+    logger.info("Pre-compiled yue-server with LoRA support not found in dataset. Building from 'adapters' branch...")
     repo_url = "https://github.com/timoncool/yue2.cpp.git"
     source_dir = work_dir / "yue2.cpp"
     build_dir = source_dir / "build"
@@ -152,9 +224,9 @@ def restore_yue_engine(work_dir: Path) -> Path:
         shutil.rmtree(build_dir, ignore_errors=True)
 
     if not source_dir.exists():
-        logger.info("Cloning yue2.cpp repository...")
+        logger.info("Cloning yue2.cpp repository (adapters branch with native LoRA support)...")
         subprocess.check_call(
-            ["git", "clone", "--recurse-submodules", "-q", repo_url, str(source_dir)]
+            ["git", "clone", "--recurse-submodules", "-b", "adapters", "-q", repo_url, str(source_dir)]
         )
 
     logger.info("Configuring CMake for Tesla T4 (Turing sm_75)...")
@@ -206,7 +278,8 @@ def restore_yue_engine(work_dir: Path) -> Path:
             except Exception:
                 pass
 
-    logger.info("Successfully built yue-server: %s", target_bin)
+    logger.info("Successfully built yue-server with LoRA support: %s", target_bin)
+    threading.Thread(target=save_dataset_version, args=(work_dir, target_bin), daemon=True).start()
     return target_bin
 
 
