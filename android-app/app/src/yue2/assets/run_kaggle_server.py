@@ -291,7 +291,7 @@ def setup_adapters(work_dir: Path) -> Path:
     adapters_dir = work_dir / "adapters"
     adapters_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Restore from Kaggle input datasets if available (0s download time)
+    # 1. Restore from Kaggle input datasets if available (instant, 0s)
     input_root = Path("/kaggle/input")
     if input_root.exists():
         for dataset_dir in input_root.iterdir():
@@ -310,26 +310,42 @@ def setup_adapters(work_dir: Path) -> Path:
                                     target_file.symlink_to(f)
                                 except Exception:
                                     shutil.copy2(f, target_file)
+                        meta_file = sub / "adapter.json"
+                        if meta_file.exists():
+                            try:
+                                shutil.copy2(meta_file, target_sub / "adapter.json")
+                            except Exception:
+                                pass
                         logger.info("Restored adapter from dataset: %s", sub.name)
 
-    # 2. Download essential catalogue LoRAs fast
-    for adapter_id in ["yue2-instrumental", "yue2-canzone-italiana", "yue2-chanson-francaise", "yue2-epic-trailer"]:
-        files = LORA_CATALOG.get(adapter_id, [])
-        dest = adapters_dir / adapter_id
-        dest.mkdir(parents=True, exist_ok=True)
-        for url, filename in files:
-            target = dest / filename
-            if target.exists() and target.stat().st_size > 1_000_000:
-                continue
-            logger.info("Downloading LoRA adapter '%s' (%s)...", adapter_id, filename)
-            try:
-                cmd = ["curl", "-fSL", "--connect-timeout", "10", "--max-time", "60", "-o", str(target), url]
-                subprocess.run(cmd, check=True, timeout=65)
-                logger.info("✓ Downloaded LoRA: %s/%s", adapter_id, filename)
-            except Exception as exc:
-                logger.warning("Could not download LoRA %s/%s: %s", adapter_id, filename, exc)
-                if target.exists() and target.stat().st_size < 1_000_000:
-                    target.unlink(missing_ok=True)
+    # 2. Download primary 'yue2-instrumental' LoRA if not already present
+    inst_dir = adapters_dir / "yue2-instrumental"
+    inst_file = inst_dir / "ar_lora_inst_v3abc.bf16.safetensors"
+    if not (inst_file.exists() and inst_file.stat().st_size > 10_000_000):
+        inst_dir.mkdir(parents=True, exist_ok=True)
+        tmp_file = inst_dir / "ar_lora_inst.tmp"
+        url = "https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/main/ar_lora_inst_v3abc.bf16.safetensors"
+        logger.info("Downloading primary 'yue2-instrumental' LoRA adapter...")
+        try:
+            cmd = ["curl", "-fSL", "--connect-timeout", "15", "--max-time", "120", "-o", str(tmp_file), url]
+            subprocess.run(cmd, check=True, timeout=125)
+            if tmp_file.exists() and tmp_file.stat().st_size > 10_000_000:
+                tmp_file.replace(inst_file)
+                meta = inst_dir / "adapter.json"
+                meta.write_text(json.dumps({
+                    "id": "yue2-instrumental",
+                    "engine": "yue2-cpp",
+                    "kind": "composition",
+                    "name": {"en": "Instrumental", "ru": "Инструментал"},
+                    "scales": {"ar": 1.0},
+                    "slots": ["ar"]
+                }))
+                logger.info("✓ Ready: yue2-instrumental LoRA (%d MB)", inst_file.stat().st_size // (1024 * 1024))
+        except Exception as exc:
+            logger.warning("Could not download yue2-instrumental (will continue without it): %s", exc)
+        finally:
+            if tmp_file.exists():
+                tmp_file.unlink(missing_ok=True)
 
     return adapters_dir
 
@@ -349,11 +365,33 @@ def launch_engine(
         "--host", "0.0.0.0",
         "--port", str(port),
     ]
+    valid_adapters = []
     if adapters_dir and adapters_dir.exists():
-        has_adapters = any(p.is_dir() and any(p.glob("*.safetensors")) for p in adapters_dir.iterdir())
-        if has_adapters:
-            cmd.extend(["--adapters", str(adapters_dir)])
-            logger.info("Configured LoRA adapters directory for GPU %d: %s", gpu_id, adapters_dir)
+        for sub in list(adapters_dir.iterdir()):
+            if not sub.is_dir():
+                continue
+            # Remove any zero-byte or temporary files
+            for f in list(sub.iterdir()):
+                if f.name.endswith(".tmp") or (f.is_file() and f.stat().st_size < 1_000_000):
+                    try:
+                        f.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            safetensors = [f for f in sub.glob("*.safetensors") if f.stat().st_size > 1_000_000]
+            if safetensors:
+                meta = sub / "adapter.json"
+                if not meta.exists():
+                    try:
+                        meta.write_text(json.dumps({"id": sub.name, "engine": "yue2-cpp", "name": {"en": sub.name}}))
+                    except Exception:
+                        pass
+                valid_adapters.append(sub.name)
+            else:
+                shutil.rmtree(sub, ignore_errors=True)
+
+    if valid_adapters:
+        cmd.extend(["--adapters", str(adapters_dir)])
+        logger.info("Configured LoRA adapters for GPU %d (%s): %s", gpu_id, ", ".join(valid_adapters), adapters_dir)
 
     logger.info("Starting yue-server on GPU %d: %s", gpu_id, " ".join(cmd))
     env = os.environ.copy()
@@ -1176,6 +1214,15 @@ def main() -> None:
         ready0 = wait_for_engine_ready(proc0, YUE_BACKEND_PORT, timeout=300)
         ready1 = wait_for_engine_ready(proc1, YUE_BACKEND_PORT_2, timeout=300)
 
+        if not (ready0 or ready1) and adapters_dir is not None:
+            logger.warning("GPU workers failed with adapters. Retrying cleanly WITHOUT adapters...")
+            proc0 = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0, adapters_dir=None)
+            proc1 = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT_2, gpu_id=1, adapters_dir=None)
+            threading.Thread(target=stream_engine_logs, args=(proc0, "GPU-0"), daemon=True).start()
+            threading.Thread(target=stream_engine_logs, args=(proc1, "GPU-1"), daemon=True).start()
+            ready0 = wait_for_engine_ready(proc0, YUE_BACKEND_PORT, timeout=300)
+            ready1 = wait_for_engine_ready(proc1, YUE_BACKEND_PORT_2, timeout=300)
+
         if ready0 and ready1:
             DUAL_GPU_ENABLED = True
             yue_proc = proc0
@@ -1198,6 +1245,11 @@ def main() -> None:
         yue_proc = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0, adapters_dir=adapters_dir)
         threading.Thread(target=stream_engine_logs, args=(yue_proc, "GPU-0"), daemon=True).start()
         ready = wait_for_engine_ready(yue_proc, YUE_BACKEND_PORT, timeout=300)
+        if not ready and adapters_dir is not None:
+            logger.warning("GPU worker failed with adapters. Retrying WITHOUT adapters...")
+            yue_proc = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0, adapters_dir=None)
+            threading.Thread(target=stream_engine_logs, args=(yue_proc, "GPU-0"), daemon=True).start()
+            ready = wait_for_engine_ready(yue_proc, YUE_BACKEND_PORT, timeout=300)
         if not ready:
             logger.error("Failed to start yue-server in time.")
             sys.exit(1)

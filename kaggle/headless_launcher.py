@@ -163,6 +163,8 @@ def wait_for_tunnel_url(
     last_status_check = 0
     current_status = "QUEUED / STARTING"
 
+    has_started = False
+
     while time.time() - start_time < timeout_seconds:
         now = time.time()
         elapsed = int(now - start_time)
@@ -173,8 +175,11 @@ def wait_for_tunnel_url(
             try:
                 st = api.kernels_status(kernel_id)  # type: ignore[attr-defined]
                 st_str = str(getattr(st, "status", st))
-                if "ERROR" in st_str:
-                    if elapsed >= 45:
+                if "RUNNING" in st_str or "QUEUED" in st_str:
+                    has_started = True
+                    current_status = st_str
+                elif "ERROR" in st_str:
+                    if (has_started or elapsed >= 90):
                         sys.stdout.write("\n")
                         raise RuntimeError(f"Ядро Kaggle завершилось с ошибкой (статус: {st_str}).")
                 else:
