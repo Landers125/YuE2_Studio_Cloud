@@ -266,44 +266,32 @@ def resolve_yue_models(work_dir: Path) -> dict[str, Path]:
 
 
 LORA_CATALOG: Final[dict[str, list[tuple[str, str]]]] = {
+    "yue2-instrumental": [
+        ("https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/main/ar_lora_inst_v3abc.bf16.safetensors", "ar_lora_inst_v3abc.bf16.safetensors"),
+    ],
     "yue2-canzone-italiana": [
-        ("https://huggingface.co/becausereasons/yue2-cnzn-canzone-italiana/resolve/6755490a2a50aa738f6ee2838384ec6efdb3a13f/cnzn_sanremo.safetensors", "cnzn_sanremo.safetensors"),
+        ("https://huggingface.co/becausereasons/yue2-cnzn-canzone-italiana/resolve/main/cnzn_sanremo.safetensors", "cnzn_sanremo.safetensors"),
     ],
     "yue2-chanson-francaise": [
-        ("https://huggingface.co/becausereasons/yue2-chnsn-chanson-francaise/resolve/d12d09b6716075196f7c10b7b134d19aa786c23c/chnsn_montmartre.safetensors", "chnsn_montmartre.safetensors"),
-    ],
-    "yue2-instrumental": [
-        ("https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/947f2f4b28978b2b6c3e316e6a87925c76bf3c4b/ar_lora_inst_v3abc.bf16.safetensors", "ar_lora_inst_v3abc.bf16.safetensors"),
+        ("https://huggingface.co/becausereasons/yue2-chnsn-chanson-francaise/resolve/main/chnsn_montmartre.safetensors", "chnsn_montmartre.safetensors"),
     ],
     "yue2-epic-trailer": [
-        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/bc84ad1867158e1112ab9601c74b338847d9dff2/adapter-ar-195/lora.safetensors", "epic-ar.safetensors"),
-        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/bc84ad1867158e1112ab9601c74b338847d9dff2/adapter-nar-194/lora.safetensors", "epic-nar.safetensors"),
+        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/main/adapter-ar-195/lora.safetensors", "epic-ar.safetensors"),
+        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/main/adapter-nar-194/lora.safetensors", "epic-nar.safetensors"),
     ],
     "yue2-industrial-rock": [
-        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/a71706d59e2874f1e6db9aa10e8da5cc19e6c924/adapter-ar-179/lora.safetensors", "industrial-ar.safetensors"),
-        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/a71706d59e2874f1e6db9aa10e8da5cc19e6c924/adapter-nar-179-v2/lora.safetensors", "industrial-nar.safetensors"),
-    ],
-    "yue2-dreampop": [
-        ("https://huggingface.co/atomtanstudio/lora-library/resolve/b5727622224c267030be0054464d953188edba49/yue2/dreampop/dreampop_sv_dreampop.safetensors", "dreampop_sv_dreampop.safetensors"),
-    ],
-    "yue2-oldschool-hiphop": [
-        ("https://huggingface.co/atomtanstudio/lora-library/resolve/b5727622224c267030be0054464d953188edba49/yue2/oldschoolhiphop/sv_oldschoolhiphop.safetensors", "sv_oldschoolhiphop.safetensors"),
-    ],
-    "yue2-militant-reggae": [
-        ("https://huggingface.co/becausereasons/yue2-mltnt-militant-reggae/resolve/a9fedc857cd1f3952be3177326c76526abcea53a/mltnt_steppers.safetensors", "mltnt_steppers.safetensors"),
-    ],
-    "yue2-sv-billie": [
-        ("https://huggingface.co/HaileyStorm/sv-billie-yue2-lora/resolve/94fe9fbf5dfd3e97eefeb3ef54e2801eb3b69077/sv_billie.safetensors", "sv_billie.safetensors"),
+        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/main/adapter-ar-179/lora.safetensors", "industrial-ar.safetensors"),
+        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/main/adapter-nar-179-v2/lora.safetensors", "industrial-nar.safetensors"),
     ],
 }
 
 
 def setup_adapters(work_dir: Path) -> Path:
-    """Configures adapters directory and downloads catalogue LoRA styles."""
+    """Configures adapters directory and restores/downloads catalogue LoRA styles."""
     adapters_dir = work_dir / "adapters"
     adapters_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Restore from Kaggle input datasets if available
+    # 1. Restore from Kaggle input datasets if available (0s download time)
     input_root = Path("/kaggle/input")
     if input_root.exists():
         for dataset_dir in input_root.iterdir():
@@ -324,8 +312,9 @@ def setup_adapters(work_dir: Path) -> Path:
                                     shutil.copy2(f, target_file)
                         logger.info("Restored adapter from dataset: %s", sub.name)
 
-    # 2. Download standard styles if missing (focus on popular catalog ones)
-    for adapter_id, files in LORA_CATALOG.items():
+    # 2. Download essential catalogue LoRAs fast
+    for adapter_id in ["yue2-instrumental", "yue2-canzone-italiana", "yue2-chanson-francaise", "yue2-epic-trailer"]:
+        files = LORA_CATALOG.get(adapter_id, [])
         dest = adapters_dir / adapter_id
         dest.mkdir(parents=True, exist_ok=True)
         for url, filename in files:
@@ -334,8 +323,8 @@ def setup_adapters(work_dir: Path) -> Path:
                 continue
             logger.info("Downloading LoRA adapter '%s' (%s)...", adapter_id, filename)
             try:
-                cmd = ["curl", "-fSL", "--retry", "3", "-o", str(target), url]
-                subprocess.run(cmd, check=True, timeout=120)
+                cmd = ["curl", "-fSL", "--connect-timeout", "10", "--max-time", "60", "-o", str(target), url]
+                subprocess.run(cmd, check=True, timeout=65)
                 logger.info("✓ Downloaded LoRA: %s/%s", adapter_id, filename)
             except Exception as exc:
                 logger.warning("Could not download LoRA %s/%s: %s", adapter_id, filename, exc)

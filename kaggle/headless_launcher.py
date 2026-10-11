@@ -174,9 +174,11 @@ def wait_for_tunnel_url(
                 st = api.kernels_status(kernel_id)  # type: ignore[attr-defined]
                 st_str = str(getattr(st, "status", st))
                 if "ERROR" in st_str:
-                    sys.stdout.write("\n")
-                    raise RuntimeError(f"Ядро Kaggle завершилось с ошибкой (статус: {st_str}).")
-                current_status = st_str
+                    if elapsed >= 45:
+                        sys.stdout.write("\n")
+                        raise RuntimeError(f"Ядро Kaggle завершилось с ошибкой (статус: {st_str}).")
+                else:
+                    current_status = st_str
             except RuntimeError:
                 raise
             except Exception:
