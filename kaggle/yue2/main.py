@@ -29,6 +29,20 @@ START_TIME: Final[float] = time.time()
 LOG_BUFFER: collections.deque[str] = collections.deque(maxlen=300)
 
 
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
+
+
+class FlushingStreamHandler(logging.StreamHandler):
+    """Flushes output stream immediately after each log record to avoid Kaggle buffering."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self.flush()
+
+
 class BufferLogHandler(logging.Handler):
     """Stores the latest log messages in an in-memory ring buffer for live monitoring."""
 
@@ -44,7 +58,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[FlushingStreamHandler(sys.stdout)],
     force=True,
 )
 logger: logging.Logger = logging.getLogger("yue2-server")

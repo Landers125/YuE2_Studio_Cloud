@@ -175,9 +175,12 @@ def wait_for_tunnel_url(
             try:
                 st = api.kernels_status(kernel_id)  # type: ignore[attr-defined]
                 st_str = str(getattr(st, "status", st))
-                if "RUNNING" in st_str or "QUEUED" in st_str:
+                if "RUNNING" in st_str:
                     has_started = True
-                    current_status = st_str
+                    current_status = "Сервер активен (RUNNING), загрузка моделей и запуск туннеля"
+                elif "QUEUED" in st_str:
+                    has_started = True
+                    current_status = "В очереди Kaggle на выделение 2x Tesla T4 GPU (обычно 1–2 мин)"
                 elif "ERROR" in st_str:
                     if (has_started or elapsed >= 90):
                         sys.stdout.write("\n")
@@ -192,7 +195,7 @@ def wait_for_tunnel_url(
         if elapsed - last_print >= 5:
             last_print = elapsed
             sys.stdout.write(
-                f"\r[2/3] ⏳ Ожидание ngrok ({elapsed}с / {timeout_seconds}с) [Kaggle: {current_status}]... "
+                f"\r[2/3] ⏳ Ожидание туннеля ({elapsed}с / {timeout_seconds}с) [{current_status}]... "
             )
             sys.stdout.flush()
 
