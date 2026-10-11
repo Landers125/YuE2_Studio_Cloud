@@ -266,29 +266,6 @@ namespace YuE2Bridge
 
             using (fResp)
             {
-                byte[] respBytes;
-                using (Stream rs = fResp.GetResponseStream())
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    if (rs != null) rs.CopyTo(ms);
-                    respBytes = ms.ToArray();
-                }
-
-                // If /props response from remote is missing transcriber, patch it in!
-                if (req.Url.AbsolutePath == "/props" && (int)fResp.StatusCode == 200)
-                {
-                    string body = Encoding.UTF8.GetString(respBytes);
-                    if (!body.Contains("\"transcriber\""))
-                    {
-                        int lastBrace = body.LastIndexOf('}');
-                        if (lastBrace >= 0)
-                        {
-                            body = body.Substring(0, lastBrace) + ",\"transcriber\":\"SheetSage2-Q8_0.gguf\"}";
-                        }
-                    }
-                    respBytes = Encoding.UTF8.GetBytes(body);
-                }
-
                 int statusCode = (int)fResp.StatusCode;
                 if (statusCode >= 500)
                 {
@@ -299,10 +276,56 @@ namespace YuE2Bridge
                     return;
                 }
 
+                // If /props response from remote is missing transcriber, patch it in
+                if (req.Url.AbsolutePath == "/props" && statusCode == 200)
+                {
+                    byte[] respBytes;
+                    using (Stream rs = fResp.GetResponseStream())
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        if (rs != null) rs.CopyTo(ms);
+                        respBytes = ms.ToArray();
+                    }
+
+                    string body = Encoding.UTF8.GetString(respBytes);
+                    if (!body.Contains("\"transcriber\""))
+                    {
+                        int lastBrace = body.LastIndexOf('}');
+                        if (lastBrace >= 0)
+                        {
+                            body = body.Substring(0, lastBrace) + ",\"transcriber\":\"SheetSage2-Q8_0.gguf\"}";
+                        }
+                        respBytes = Encoding.UTF8.GetBytes(body);
+                    }
+
+                    res.StatusCode = statusCode;
+                    res.ContentType = fResp.ContentType;
+                    res.ContentLength64 = respBytes.Length;
+                    res.OutputStream.Write(respBytes, 0, respBytes.Length);
+                    res.OutputStream.Close();
+                    return;
+                }
+
+                // For all other requests (especially large multipart audio results ~224 MB), stream directly
                 res.StatusCode = statusCode;
                 res.ContentType = fResp.ContentType;
-                res.ContentLength64 = respBytes.Length;
-                res.OutputStream.Write(respBytes, 0, respBytes.Length);
+                if (fResp.ContentLength > 0)
+                {
+                    res.ContentLength64 = fResp.ContentLength;
+                }
+
+                using (Stream rs = fResp.GetResponseStream())
+                {
+                    if (rs != null)
+                    {
+                        byte[] buffer = new byte[65536];
+                        int read;
+                        while ((read = rs.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            res.OutputStream.Write(buffer, 0, read);
+                        }
+                    }
+                }
                 res.OutputStream.Close();
             }
         }

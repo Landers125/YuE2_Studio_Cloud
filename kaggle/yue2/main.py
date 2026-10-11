@@ -787,7 +787,7 @@ LAST_ACTIVITY_TIME: float = time.time()
 
 
 def extract_multipart_parts(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
-    """Extracts (content_type, part_bytes) from a multipart/mixed HTTP body."""
+    """Extracts (content_type, part_bytes) from a multipart/mixed HTTP body safely without corrupting binary data."""
     if not content_type.lower().startswith("multipart/"):
         return [(content_type, body)] if body else []
 
@@ -795,24 +795,43 @@ def extract_multipart_parts(content_type: str, body: bytes) -> list[tuple[str, b
     for token in content_type.split(";"):
         token = token.strip()
         if token.lower().startswith("boundary="):
-            boundary = token.split("=", 1)[1].strip('"\'')
+            boundary = token.split("=", 1)[1].strip("\"'")
             break
     if not boundary:
         return []
 
-    marker = f"--{boundary}".encode("utf-8")
-    raw_parts = body.split(marker)
+    marker = b"--" + boundary.encode("utf-8")
+    if not body.startswith(marker):
+        return []
+
+    cursor = 0
     parts: list[tuple[str, bytes]] = []
-    for rp in raw_parts:
-        rp = rp.strip(b"\r\n-")
-        if not rp or b"\r\n\r\n" not in rp:
-            continue
-        hdr, part_body = rp.split(b"\r\n\r\n", 1)
+    while cursor < len(body):
+        if not body[cursor:].startswith(marker):
+            break
+        cursor += len(marker)
+        if body[cursor:].startswith(b"--\r\n") or body[cursor:] == b"--":
+            break
+        if not body[cursor:].startswith(b"\r\n"):
+            break
+        cursor += 2
+        hdr_end = body[cursor:].find(b"\r\n\r\n")
+        if hdr_end == -1:
+            break
+        hdr_end += cursor
+        hdr_str = body[cursor:hdr_end].decode("utf-8", errors="ignore")
         ctype = "application/octet-stream"
-        for hline in hdr.split(b"\r\n"):
-            if hline.lower().startswith(b"content-type:"):
-                ctype = hline.split(b":", 1)[1].strip().decode("utf-8")
+        for line in hdr_str.split("\r\n"):
+            if line.lower().startswith("content-type:"):
+                ctype = line.split(":", 1)[1].strip()
+        cstart = hdr_end + 4
+        next_b = body[cstart:].find(b"\r\n" + marker)
+        if next_b == -1:
+            break
+        next_b += cstart
+        part_body = body[cstart:next_b]
         parts.append((ctype, part_body))
+        cursor = next_b + 2
     return parts
 
 
