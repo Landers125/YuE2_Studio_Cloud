@@ -686,6 +686,36 @@ COMPLETED_JOBS: dict[str, str] = {}
 LAST_ACTIVITY_TIME: float = time.time()
 
 
+def extract_multipart_parts(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
+    """Extracts (content_type, part_bytes) from a multipart/mixed HTTP body."""
+    if not content_type.lower().startswith("multipart/"):
+        return [(content_type, body)] if body else []
+
+    boundary = ""
+    for token in content_type.split(";"):
+        token = token.strip()
+        if token.lower().startswith("boundary="):
+            boundary = token.split("=", 1)[1].strip('"\'')
+            break
+    if not boundary:
+        return []
+
+    marker = f"--{boundary}".encode("utf-8")
+    raw_parts = body.split(marker)
+    parts: list[tuple[str, bytes]] = []
+    for rp in raw_parts:
+        rp = rp.strip(b"\r\n-")
+        if not rp or b"\r\n\r\n" not in rp:
+            continue
+        hdr, part_body = rp.split(b"\r\n\r\n", 1)
+        ctype = "application/octet-stream"
+        for hline in hdr.split(b"\r\n"):
+            if hline.lower().startswith(b"content-type:"):
+                ctype = hline.split(b":", 1)[1].strip().decode("utf-8")
+        parts.append((ctype, part_body))
+    return parts
+
+
 class YuE2ServerHandler(http.server.BaseHTTPRequestHandler):
     """HTTP proxy for YuE2 engine: adds /shutdown, /transcribe and transparently forwards valid API calls."""
 
@@ -864,7 +894,6 @@ class YuE2ServerHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(resp_data)
         logger.info("Transcribed audio successfully into ABC score.")
-
     def _handle_dual_synth(self) -> None:
         content_length = int(self.headers.get("Content-Length", 0))
         raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
@@ -960,9 +989,67 @@ class YuE2ServerHandler(http.server.BaseHTTPRequestHandler):
             self._proxy_to_backend("GET", target=target)
             return
         elif result_param == "1":
-            target = f"http://127.0.0.1:{YUE_BACKEND_PORT}/job?id={id0}&result=1"
-            self._proxy_to_backend("GET", target=target)
-            return
+            # Fetch Worker 0
+            body0, ct0, status0 = b"", "", 500
+            try:
+                req0 = urllib.request.Request(f"http://127.0.0.1:{YUE_BACKEND_PORT}/job?id={id0}&result=1", headers={"User-Agent": "DualMerger"})
+                with urllib.request.urlopen(req0, timeout=120) as r0:
+                    status0 = r0.status
+                    ct0 = r0.headers.get("Content-Type", "")
+                    body0 = r0.read()
+            except Exception as exc:
+                logger.warning("Could not fetch result from Worker 0: %s", exc)
+
+            # Fetch Worker 1
+            body1, ct1, status1 = b"", "", 500
+            try:
+                req1 = urllib.request.Request(f"http://127.0.0.1:{YUE_BACKEND_PORT_2}/job?id={id1}&result=1", headers={"User-Agent": "DualMerger"})
+                with urllib.request.urlopen(req1, timeout=120) as r1:
+                    status1 = r1.status
+                    ct1 = r1.headers.get("Content-Type", "")
+                    body1 = r1.read()
+            except Exception as exc:
+                logger.warning("Could not fetch result from Worker 1: %s", exc)
+
+            # Extract parts and merge so desktop app receives all variations at once!
+            parts0 = extract_multipart_parts(ct0, body0) if status0 == 200 else []
+            parts1 = extract_multipart_parts(ct1, body1) if status1 == 200 else []
+
+            if parts0 and parts1:
+                boundary = "yue2-dual-composite-boundary"
+                combined = b""
+                for p_type, p_data in (parts0 + parts1):
+                    combined += f"--{boundary}\r\nContent-Type: {p_type}\r\n\r\n".encode("utf-8")
+                    combined += p_data
+                    combined += b"\r\n"
+                combined += f"--{boundary}--\r\n".encode("utf-8")
+
+                self.send_response(200)
+                self.send_header("Content-Type", f"multipart/mixed; boundary={boundary}")
+                self.send_header("Content-Length", str(len(combined)))
+                self.end_headers()
+                self.wfile.write(combined)
+                logger.info("✓ Combined both variations into single multipart/mixed response for %s (%d bytes).", composite_id, len(combined))
+                return
+            elif parts0:
+                self.send_response(200)
+                self.send_header("Content-Type", ct0)
+                self.send_header("Content-Length", str(len(body0)))
+                self.end_headers()
+                self.wfile.write(body0)
+                return
+            elif parts1:
+                self.send_response(200)
+                self.send_header("Content-Type", ct1)
+                self.send_header("Content-Length", str(len(body1)))
+                self.end_headers()
+                self.wfile.write(body1)
+                return
+            else:
+                self.send_response(502)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Failed to retrieve results from workers"}')
+                return
 
         status0 = "running"
         status1 = "running"
