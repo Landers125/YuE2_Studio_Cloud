@@ -575,42 +575,37 @@ def setup_cloudflare_tunnel(port: int, work_dir: Path) -> tuple[subprocess.Popen
         "--url", f"http://127.0.0.1:{port}",
         "--no-autoupdate",
     ]
-    logger.info("Launching Cloudflare tunnel on port %d...", port)
+    log_file = work_dir / "cloudflared.log"
+    log_fd = open(log_file, "w+", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.PIPE,
+        stdout=log_fd,
         stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1,
     )
 
     url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
     public_url = ""
     start_time = time.time()
     while time.time() - start_time < 45:
-        if proc.stdout:
-            line = proc.stdout.readline()
-            if not line and proc.poll() is not None:
-                break
-            match = url_pattern.search(line)
+        if proc.poll() is not None:
+            logger.warning("cloudflared process exited unexpectedly with code %s", proc.returncode)
+            break
+        try:
+            log_fd.flush()
+            content = log_file.read_text(encoding="utf-8", errors="ignore")
+            match = url_pattern.search(content)
             if match:
                 public_url = match.group(0)
                 break
-        time.sleep(0.1)
+        except Exception:
+            pass
+        time.sleep(0.5)
 
     if not public_url:
         logger.warning("Could not automatically extract Cloudflare URL within 45s.")
         public_url = f"http://127.0.0.1:{port}"
 
-    def drain_tunnel(p: subprocess.Popen[str]) -> None:
-        while True:
-            if p.stdout:
-                line = p.stdout.readline()
-                if not line and p.poll() is not None:
-                    break
-            time.sleep(0.02)
-
-    threading.Thread(target=drain_tunnel, args=(proc,), daemon=True).start()
     return proc, public_url
 
 
