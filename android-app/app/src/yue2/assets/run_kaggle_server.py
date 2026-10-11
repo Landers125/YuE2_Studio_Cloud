@@ -265,11 +265,92 @@ def resolve_yue_models(work_dir: Path) -> dict[str, Path]:
     return resolved
 
 
+LORA_CATALOG: Final[dict[str, list[tuple[str, str]]]] = {
+    "yue2-canzone-italiana": [
+        ("https://huggingface.co/becausereasons/yue2-cnzn-canzone-italiana/resolve/6755490a2a50aa738f6ee2838384ec6efdb3a13f/cnzn_sanremo.safetensors", "cnzn_sanremo.safetensors"),
+    ],
+    "yue2-chanson-francaise": [
+        ("https://huggingface.co/becausereasons/yue2-chnsn-chanson-francaise/resolve/d12d09b6716075196f7c10b7b134d19aa786c23c/chnsn_montmartre.safetensors", "chnsn_montmartre.safetensors"),
+    ],
+    "yue2-instrumental": [
+        ("https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/947f2f4b28978b2b6c3e316e6a87925c76bf3c4b/ar_lora_inst_v3abc.bf16.safetensors", "ar_lora_inst_v3abc.bf16.safetensors"),
+    ],
+    "yue2-epic-trailer": [
+        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/bc84ad1867158e1112ab9601c74b338847d9dff2/adapter-ar-195/lora.safetensors", "epic-ar.safetensors"),
+        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/bc84ad1867158e1112ab9601c74b338847d9dff2/adapter-nar-194/lora.safetensors", "epic-nar.safetensors"),
+    ],
+    "yue2-industrial-rock": [
+        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/a71706d59e2874f1e6db9aa10e8da5cc19e6c924/adapter-ar-179/lora.safetensors", "industrial-ar.safetensors"),
+        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/a71706d59e2874f1e6db9aa10e8da5cc19e6c924/adapter-nar-179-v2/lora.safetensors", "industrial-nar.safetensors"),
+    ],
+    "yue2-dreampop": [
+        ("https://huggingface.co/atomtanstudio/lora-library/resolve/b5727622224c267030be0054464d953188edba49/yue2/dreampop/dreampop_sv_dreampop.safetensors", "dreampop_sv_dreampop.safetensors"),
+    ],
+    "yue2-oldschool-hiphop": [
+        ("https://huggingface.co/atomtanstudio/lora-library/resolve/b5727622224c267030be0054464d953188edba49/yue2/oldschoolhiphop/sv_oldschoolhiphop.safetensors", "sv_oldschoolhiphop.safetensors"),
+    ],
+    "yue2-militant-reggae": [
+        ("https://huggingface.co/becausereasons/yue2-mltnt-militant-reggae/resolve/a9fedc857cd1f3952be3177326c76526abcea53a/mltnt_steppers.safetensors", "mltnt_steppers.safetensors"),
+    ],
+    "yue2-sv-billie": [
+        ("https://huggingface.co/HaileyStorm/sv-billie-yue2-lora/resolve/94fe9fbf5dfd3e97eefeb3ef54e2801eb3b69077/sv_billie.safetensors", "sv_billie.safetensors"),
+    ],
+}
+
+
+def setup_adapters(work_dir: Path) -> Path:
+    """Configures adapters directory and downloads catalogue LoRA styles."""
+    adapters_dir = work_dir / "adapters"
+    adapters_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Restore from Kaggle input datasets if available
+    input_root = Path("/kaggle/input")
+    if input_root.exists():
+        for dataset_dir in input_root.iterdir():
+            if not dataset_dir.is_dir():
+                continue
+            cand = dataset_dir / "adapters"
+            if cand.exists() and cand.is_dir():
+                for sub in cand.iterdir():
+                    if sub.is_dir():
+                        target_sub = adapters_dir / sub.name
+                        target_sub.mkdir(parents=True, exist_ok=True)
+                        for f in sub.glob("*.safetensors"):
+                            target_file = target_sub / f.name
+                            if not target_file.exists():
+                                try:
+                                    target_file.symlink_to(f)
+                                except Exception:
+                                    shutil.copy2(f, target_file)
+                        logger.info("Restored adapter from dataset: %s", sub.name)
+
+    # 2. Download standard styles if missing (focus on popular catalog ones)
+    for adapter_id, files in LORA_CATALOG.items():
+        dest = adapters_dir / adapter_id
+        dest.mkdir(parents=True, exist_ok=True)
+        for url, filename in files:
+            target = dest / filename
+            if target.exists() and target.stat().st_size > 1_000_000:
+                continue
+            logger.info("Downloading LoRA adapter '%s' (%s)...", adapter_id, filename)
+            try:
+                cmd = ["curl", "-fSL", "--retry", "3", "-o", str(target), url]
+                subprocess.run(cmd, check=True, timeout=120)
+                logger.info("✓ Downloaded LoRA: %s/%s", adapter_id, filename)
+            except Exception as exc:
+                logger.warning("Could not download LoRA %s/%s: %s", adapter_id, filename, exc)
+                if target.exists() and target.stat().st_size < 1_000_000:
+                    target.unlink(missing_ok=True)
+
+    return adapters_dir
+
+
 def launch_engine(
     executable: Path,
     models: dict[str, Path],
     port: int = YUE_BACKEND_PORT,
     gpu_id: int = 0,
+    adapters_dir: Path | None = None,
 ) -> subprocess.Popen[str]:
     """Launches yue-server process."""
     cmd = [
@@ -279,6 +360,11 @@ def launch_engine(
         "--host", "0.0.0.0",
         "--port", str(port),
     ]
+    if adapters_dir and adapters_dir.exists():
+        has_adapters = any(p.is_dir() and any(p.glob("*.safetensors")) for p in adapters_dir.iterdir())
+        if has_adapters:
+            cmd.extend(["--adapters", str(adapters_dir)])
+            logger.info("Configured LoRA adapters directory for GPU %d: %s", gpu_id, adapters_dir)
 
     logger.info("Starting yue-server on GPU %d: %s", gpu_id, " ".join(cmd))
     env = os.environ.copy()
@@ -983,6 +1069,7 @@ def main() -> None:
 
     engine_bin = restore_yue_engine(work_dir)
     models = resolve_yue_models(work_dir)
+    adapters_dir = setup_adapters(work_dir)
 
     global DUAL_GPU_ENABLED
     yue_proc: subprocess.Popen[str] | None = None
@@ -1004,8 +1091,8 @@ def main() -> None:
 
     if gpu_count >= 2:
         logger.info("[Dual-GPU Mode] Initializing 2x Tesla T4 GPUs...")
-        proc0 = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0)
-        proc1 = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT_2, gpu_id=1)
+        proc0 = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0, adapters_dir=adapters_dir)
+        proc1 = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT_2, gpu_id=1, adapters_dir=adapters_dir)
 
         threading.Thread(target=stream_engine_logs, args=(proc0, "GPU-0"), daemon=True).start()
         threading.Thread(target=stream_engine_logs, args=(proc1, "GPU-1"), daemon=True).start()
@@ -1032,7 +1119,7 @@ def main() -> None:
             sys.exit(1)
     else:
         DUAL_GPU_ENABLED = False
-        yue_proc = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0)
+        yue_proc = launch_engine(engine_bin, models, port=YUE_BACKEND_PORT, gpu_id=0, adapters_dir=adapters_dir)
         threading.Thread(target=stream_engine_logs, args=(yue_proc, "GPU-0"), daemon=True).start()
         ready = wait_for_engine_ready(yue_proc, YUE_BACKEND_PORT, timeout=300)
         if not ready:
