@@ -5,9 +5,10 @@
 
 <img src="docs/logo.png" alt="" width="112" height="112" />
 
-# YuE2 Studio
+# YuE2 Studio Cloud (Enhanced Fork)
 
-**Full songs with an editable score, generated on your own GPU. One executable — no Python, no Node.js, no launcher.**
+**Доработанный форк проекта [timoncool/YuE2-Studio](https://github.com/timoncool/YuE2-Studio) с поддержкой мобильного Android-клиента и 2x GPU Kaggle Cloud.**
+Full songs with an editable score, generated on your own GPU or Cloud 2x Tesla T4. One executable / Android APK — no Python, no Node.js, no launcher.
 
 [![Project page](https://img.shields.io/badge/Project_page-timoncool.github.io-7c3aed?style=for-the-badge)](https://timoncool.github.io/YuE2-Studio/)
 [![Download](https://img.shields.io/badge/Download-Windows_x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/timoncool/YuE2-Studio/releases/latest)
@@ -25,6 +26,18 @@
 ![YuE2 Studio](docs/screenshots/en-01-create.png)
 
 </div>
+
+> [!IMPORTANT]
+> ### 🌟 **Это официальный расширенный и доработанный форк проекта [YuE2 Studio](https://github.com/timoncool/YuE2-Studio) от [@timoncool](https://github.com/timoncool)!**
+> 
+> **Ключевые доработки и новый функционал в этом репозитории:**
+> - 📱 **Полнофункциональное мобильное приложение под Android**: нативный интерфейс Jetpack Compose, генерация треков и каверов, встроенный аудиоплеер, библиотека сохраненных треков, управление облачным сервером в 1 клик.
+> - ⚡ **Облачный бэкенд на Kaggle (2x Tesla T4 GPU, 32 ГБ VRAM)**: параллельная генерация сразу **2 вариантов трека** на двух GPU одновременно.
+> - 📋 **Интерактивный мониторинг и live-логи сервера (`/logs`)**: реальный вывод прогресса, VRAM и шагов Flow-Matching прямо на экране смартфона и в консоли.
+> - ⏱ **Интеллектуальное автоотключение (Auto-Idle 10 мин)**: автоматическое сохранение 30-часовой недельной квоты GPU Kaggle при неактивности.
+> - 🚀 **Headless запуск с ПК (`launch-kaggle.bat`)**: автоматический пуш ядра в облако и туннелирование без необходимости открывать браузер.
+>
+> *(This repository is an enhanced fork of [YuE2 Studio](https://github.com/timoncool/YuE2-Studio) by [@timoncool](https://github.com/timoncool), adding full Android mobile support, Kaggle 2x Tesla T4 dual-variation generation, live server monitoring, and auto-idle shutdown).*
 
 YuE2 Studio is a desktop studio for **YuE2**, the open song model from M-A-P that writes a
 score before it sings. Describe a style, write the lyrics, and the model composes a melody
