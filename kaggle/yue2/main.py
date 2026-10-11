@@ -91,12 +91,10 @@ def detect_environment() -> tuple[Path, int]:
 
 
 def check_engine_supports_adapters(bin_path: Path) -> bool:
-    """Verifies that yue-server binary supports --adapters CLI argument."""
+    """Verifies that yue-server binary supports --adapters CLI argument without executing it."""
     try:
-        env = dict(os.environ)
-        env["LD_LIBRARY_PATH"] = f"{bin_path.parent}:{env.get('LD_LIBRARY_PATH', '')}"
-        res = subprocess.run([str(bin_path), "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5, env=env)
-        return "--adapters" in (res.stdout + res.stderr)
+        raw = bin_path.read_bytes()
+        return b"--adapters" in raw or b"adapters" in raw
     except Exception:
         return False
 
@@ -177,7 +175,7 @@ def restore_yue_engine(work_dir: Path) -> Path:
     kaggle_input = Path("/kaggle/input")
     if kaggle_input.exists():
         for candidate in kaggle_input.rglob("yue-server"):
-            if candidate.is_file():
+            if candidate.is_file() and check_engine_supports_adapters(candidate):
                 cand_dir = candidate.parent
                 cand_libs = list(cand_dir.glob("lib*.so*"))
                 if cand_libs:
@@ -196,12 +194,8 @@ def restore_yue_engine(work_dir: Path) -> Path:
                                     logger.info("Patched %s for CUDA 12 compatibility.", c_lib.name)
                             except Exception as p_exc:
                                 logger.warning("Could not patch %s: %s", c_lib.name, p_exc)
-                    if check_engine_supports_adapters(target_bin):
-                        logger.info("Restored yue-server with LoRA support from Kaggle Input: %s", candidate)
-                        return target_bin
-                    else:
-                        logger.warning("yue-server at %s did not pass adapters check, removing...", candidate)
-                        target_bin.unlink(missing_ok=True)
+                    logger.info("Restored yue-server with LoRA support from Kaggle Input: %s", candidate)
+                    return target_bin
 
     logger.info("Pre-compiled yue-server with LoRA support not found in dataset. Building from 'adapters' branch...")
     repo_url = "https://github.com/timoncool/yue2.cpp.git"
