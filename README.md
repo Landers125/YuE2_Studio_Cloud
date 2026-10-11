@@ -12,6 +12,7 @@
 [![Project page](https://img.shields.io/badge/Project_page-timoncool.github.io-7c3aed?style=for-the-badge)](https://timoncool.github.io/YuE2-Studio/)
 [![Download](https://img.shields.io/badge/Download-Windows_x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/timoncool/YuE2-Studio/releases/latest)
 [![Open In Colab](https://img.shields.io/badge/Google_Colab-T4_GPU-F9AB00?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/timoncool/YuE2-Studio/blob/main/colab/YuE2_Studio_Colab_T4.ipynb)
+[![Kaggle 2x T4](https://img.shields.io/badge/Kaggle-2x_Tesla_T4_GPU-20BEFF?style=for-the-badge&logo=kaggle&logoColor=white)](docs/kaggle-2x-t4-guide.md)
 [![Donate](https://img.shields.io/badge/Support-Donate-ff69b4?style=for-the-badge)](DONATE.md)
 
 [![License](https://img.shields.io/github/license/timoncool/YuE2-Studio?style=flat-square)](LICENSE)
