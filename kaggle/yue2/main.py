@@ -180,7 +180,7 @@ def restore_yue_engine(work_dir: Path) -> Path:
             if candidate.is_file():
                 cand_dir = candidate.parent
                 cand_libs = list(cand_dir.glob("lib*.so*"))
-                if cand_libs and check_engine_supports_adapters(candidate):
+                if cand_libs:
                     shutil.copy2(candidate, target_bin)
                     target_bin.chmod(0o755)
                     for lib in cand_libs:
@@ -196,8 +196,12 @@ def restore_yue_engine(work_dir: Path) -> Path:
                                     logger.info("Patched %s for CUDA 12 compatibility.", c_lib.name)
                             except Exception as p_exc:
                                 logger.warning("Could not patch %s: %s", c_lib.name, p_exc)
-                    logger.info("Restored yue-server with LoRA support from Kaggle Input: %s", candidate)
-                    return target_bin
+                    if check_engine_supports_adapters(target_bin):
+                        logger.info("Restored yue-server with LoRA support from Kaggle Input: %s", candidate)
+                        return target_bin
+                    else:
+                        logger.warning("yue-server at %s did not pass adapters check, removing...", candidate)
+                        target_bin.unlink(missing_ok=True)
 
     logger.info("Pre-compiled yue-server with LoRA support not found in dataset. Building from 'adapters' branch...")
     repo_url = "https://github.com/timoncool/yue2.cpp.git"
