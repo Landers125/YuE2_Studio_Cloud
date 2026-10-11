@@ -352,24 +352,70 @@ def resolve_yue_models(work_dir: Path) -> dict[str, Path]:
     return resolved
 
 
-LORA_CATALOG: Final[dict[str, list[tuple[str, str]]]] = {
-    "yue2-instrumental": [
-        ("https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/main/ar_lora_inst_v3abc.bf16.safetensors", "ar_lora_inst_v3abc.bf16.safetensors"),
-    ],
-    "yue2-canzone-italiana": [
-        ("https://huggingface.co/becausereasons/yue2-cnzn-canzone-italiana/resolve/main/cnzn_sanremo.safetensors", "cnzn_sanremo.safetensors"),
-    ],
-    "yue2-chanson-francaise": [
-        ("https://huggingface.co/becausereasons/yue2-chnsn-chanson-francaise/resolve/main/chnsn_montmartre.safetensors", "chnsn_montmartre.safetensors"),
-    ],
-    "yue2-epic-trailer": [
-        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/main/adapter-ar-195/lora.safetensors", "epic-ar.safetensors"),
-        ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/main/adapter-nar-194/lora.safetensors", "epic-nar.safetensors"),
-    ],
-    "yue2-industrial-rock": [
-        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/main/adapter-ar-179/lora.safetensors", "industrial-ar.safetensors"),
-        ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/main/adapter-nar-179-v2/lora.safetensors", "industrial-nar.safetensors"),
-    ],
+LORA_CATALOG_META: Final[dict[str, dict]] = {
+    "yue2-instrumental": {
+        "files": [("https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/main/ar_lora_inst_v3abc.bf16.safetensors", "ar_lora_inst_v3abc.bf16.safetensors")],
+        "meta": {
+            "id": "yue2-instrumental",
+            "engine": "yue2-cpp",
+            "kind": "composition",
+            "name": {"en": "Instrumental", "ru": "Инструментал"},
+            "scales": {"ar": 1.0},
+            "slots": ["ar"],
+        },
+    },
+    "yue2-canzone-italiana": {
+        "files": [("https://huggingface.co/becausereasons/yue2-cnzn-canzone-italiana/resolve/main/cnzn_sanremo.safetensors", "cnzn_sanremo.safetensors")],
+        "meta": {
+            "id": "yue2-canzone-italiana",
+            "engine": "yue2-cpp",
+            "kind": "style",
+            "trigger": "cnzn",
+            "name": {"en": "Canzone Italiana", "ru": "Итальянская эстрада"},
+            "scales": {"ar": 1.0, "nar": 1.0},
+            "slots": ["ar", "nar"],
+        },
+    },
+    "yue2-chanson-francaise": {
+        "files": [("https://huggingface.co/becausereasons/yue2-chnsn-chanson-francaise/resolve/main/chnsn_montmartre.safetensors", "chnsn_montmartre.safetensors")],
+        "meta": {
+            "id": "yue2-chanson-francaise",
+            "engine": "yue2-cpp",
+            "kind": "style",
+            "trigger": "chnsn",
+            "name": {"en": "Chanson Francaise", "ru": "Французский шансон"},
+            "scales": {"ar": 1.0, "nar": 1.0},
+            "slots": ["ar", "nar"],
+        },
+    },
+    "yue2-epic-trailer": {
+        "files": [
+            ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/main/adapter-ar-195/lora.safetensors", "epic-ar.safetensors"),
+            ("https://huggingface.co/monsterovich/yue2-steps-from-hell/resolve/main/adapter-nar-194/lora.safetensors", "epic-nar.safetensors"),
+        ],
+        "meta": {
+            "id": "yue2-epic-trailer",
+            "engine": "yue2-cpp",
+            "kind": "style",
+            "name": {"en": "Epic Trailer", "ru": "Эпический трейлер"},
+            "scales": {"ar": 1.0, "nar": 1.0},
+            "slots": ["ar", "nar"],
+        },
+    },
+    "yue2-industrial-rock": {
+        "files": [
+            ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/main/adapter-ar-179/lora.safetensors", "industrial-ar.safetensors"),
+            ("https://huggingface.co/monsterovich/yue2-industrial-rock-lora/resolve/main/adapter-nar-179-v2/lora.safetensors", "industrial-nar.safetensors"),
+        ],
+        "meta": {
+            "id": "yue2-industrial-rock",
+            "engine": "yue2-cpp",
+            "kind": "style",
+            "name": {"en": "Industrial Rock", "ru": "Индастриал рок"},
+            "scales": {"ar": 1.0, "nar": 1.0},
+            "slots": ["ar", "nar"],
+        },
+    },
 }
 
 
@@ -405,34 +451,30 @@ def setup_adapters(work_dir: Path) -> Path:
                                 pass
                         logger.info("Restored adapter from dataset: %s", sub.name)
 
-    # 2. Download primary 'yue2-instrumental' LoRA if not already present
-    inst_dir = adapters_dir / "yue2-instrumental"
-    inst_file = inst_dir / "ar_lora_inst_v3abc.bf16.safetensors"
-    if not (inst_file.exists() and inst_file.stat().st_size > 10_000_000):
-        inst_dir.mkdir(parents=True, exist_ok=True)
-        tmp_file = inst_dir / "ar_lora_inst.tmp"
-        url = "https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/main/ar_lora_inst_v3abc.bf16.safetensors"
-        logger.info("Downloading primary 'yue2-instrumental' LoRA adapter...")
-        try:
-            cmd = ["curl", "-fSL", "--connect-timeout", "15", "--max-time", "120", "-o", str(tmp_file), url]
-            subprocess.run(cmd, check=True, timeout=125)
-            if tmp_file.exists() and tmp_file.stat().st_size > 10_000_000:
-                tmp_file.replace(inst_file)
-                meta = inst_dir / "adapter.json"
-                meta.write_text(json.dumps({
-                    "id": "yue2-instrumental",
-                    "engine": "yue2-cpp",
-                    "kind": "composition",
-                    "name": {"en": "Instrumental", "ru": "Инструментал"},
-                    "scales": {"ar": 1.0},
-                    "slots": ["ar"]
-                }))
-                logger.info("✓ Ready: yue2-instrumental LoRA (%d MB)", inst_file.stat().st_size // (1024 * 1024))
-        except Exception as exc:
-            logger.warning("Could not download yue2-instrumental (will continue without it): %s", exc)
-        finally:
-            if tmp_file.exists():
-                tmp_file.unlink(missing_ok=True)
+    # 2. Download all catalogue LoRA adapters if not already present
+    for adapter_id, info in LORA_CATALOG_META.items():
+        sub_dir = adapters_dir / adapter_id
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        meta_file = sub_dir / "adapter.json"
+        if not meta_file.exists():
+            meta_file.write_text(json.dumps(info["meta"], indent=2, ensure_ascii=False), encoding="utf-8")
+
+        for url, fname in info["files"]:
+            target_file = sub_dir / fname
+            if not (target_file.exists() and target_file.stat().st_size > 5_000_000):
+                tmp_file = sub_dir / f"{fname}.tmp"
+                logger.info("Downloading adapter '%s' (%s)...", adapter_id, fname)
+                try:
+                    cmd = ["curl", "-fSL", "--connect-timeout", "15", "--max-time", "120", "-o", str(tmp_file), url]
+                    subprocess.run(cmd, check=True, timeout=125)
+                    if tmp_file.exists() and tmp_file.stat().st_size > 5_000_000:
+                        tmp_file.replace(target_file)
+                        logger.info("✓ Ready: %s/%s (%d MB)", adapter_id, fname, target_file.stat().st_size // (1024 * 1024))
+                except Exception as exc:
+                    logger.warning("Could not download %s for %s: %s", fname, adapter_id, exc)
+                finally:
+                    if tmp_file.exists():
+                        tmp_file.unlink(missing_ok=True)
 
     return adapters_dir
 
