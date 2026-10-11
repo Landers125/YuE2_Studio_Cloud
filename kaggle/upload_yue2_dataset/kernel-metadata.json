@@ -1,0 +1,16 @@
+{
+  "id": "jungterdai/upload-yue2-dataset",
+  "title": "Upload YuE2 Dataset",
+  "code_file": "upload-yue2-dataset.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}

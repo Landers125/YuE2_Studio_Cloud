@@ -141,7 +141,7 @@ struct AppState {
 
 #[derive(Clone)]
 struct EngineClient {
-    base_url: String,
+    base_url: Arc<std::sync::RwLock<String>>,
     http: reqwest::Client,
     /// The last health answer and when it was taken. Every status poll asks,
     /// and on Windows a refused loopback connect takes about two seconds, so
@@ -468,9 +468,8 @@ struct OpenRouterTranscriptionRequest {
     language: Option<String>,
 }
 
-/// Launch flags for the local engine process. They belong to the running
-/// engine, so changing one restarts it.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+/// Launch flags for the local engine process, or remote Colab engine connection.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 struct EngineOptions {
     backend: music_engine::yue_server::ComputeBackend,
@@ -484,6 +483,10 @@ struct EngineOptions {
     /// The NVIDIA card, by its nvidia-smi index, that every CUDA process of
     /// the studio computes on. None: the first. Taken at the studio's start.
     gpu: Option<u32>,
+    /// Google Colab / Remote engine URL (e.g. https://xxx.trycloudflare.com).
+    remote_url: Option<String>,
+    /// Whether to use the remote engine instead of starting a local yue-server process.
+    use_remote: bool,
 }
 
 impl EngineOptions {
@@ -540,7 +543,7 @@ impl EngineOptions {
         chain
     }
 
-    fn to_engine(self) -> music_engine::yue_server::YueServerOptions {
+    fn to_engine(&self) -> music_engine::yue_server::YueServerOptions {
         music_engine::yue_server::YueServerOptions {
             backend: self.backend,
             keep_loaded: self.keep_loaded,
@@ -681,9 +684,14 @@ pub async fn serve() -> anyhow::Result<()> {
                 .or_else(|| Some(hardware::recommended_local_profile().into())),
             None,
         ),
+    let persisted_engine_options = persisted.as_ref().map(|settings| settings.engine_options.clone()).unwrap_or_default();
+    let music_server = if persisted_engine_options.use_remote && persisted_engine_options.remote_url.as_ref().is_some_and(|u| !u.trim().is_empty()) {
+        EngineClient::new(persisted_engine_options.remote_url.clone().unwrap())
+    } else {
+        EngineClient::from_environment()
     };
-    let music_server = EngineClient::from_environment();
-    let engine_log = engine_log::EngineLog::follow(music_server.http.clone(), music_server.url("/logs"));
+    let ms_clone = music_server.clone();
+    let engine_log = engine_log::EngineLog::follow_dynamic(music_server.http.clone(), Arc::new(move || ms_clone.url("/logs")));
     let state = AppState {
         configuration: Arc::new(RwLock::new(sanitize_persisted_configuration(
             persisted.as_ref().map(|settings| settings.configuration.clone()).unwrap_or_else(initial_configuration),
@@ -773,6 +781,7 @@ pub async fn serve() -> anyhow::Result<()> {
         .route("/v1/configuration", get(configuration).put(update_configuration))
         .route("/engine/options", get(engine_options).put(update_engine_options))
         .route("/engine/restart", post(restart_local_engine))
+        .route("/engine/remote/test", post(test_remote_engine))
         .route("/v1/engine/logs", get(engine_logs))
         .route("/v1/engine/progress", get(engine_progress))
         .route("/v1/system/resources", get(system_resources))
@@ -973,6 +982,12 @@ pub async fn serve() -> anyhow::Result<()> {
             // two seconds is what filled a whole log with one sentence.
             let mut was_running = false;
             loop {
+                let options = state.engine_options.read().await.clone();
+                if options.use_remote && state.music_server.is_remote() {
+                    was_running = state.music_server.health().await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    continue;
+                }
                 let ready = state.model_manager.status(effective_install_target(&state).await).await.ready;
                 let running = state.music_server.health().await;
                 // the card has one owner: a preparation or a training run
@@ -3702,8 +3717,8 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
     // takes this port and the window then waits forever on an engine that
     // copy has no bundle for. Saying whose service this is turns a hang into
     // a sentence.
-    let executable = std::env::current_exe().ok().map(|path| path.display().to_string());
-    let engine_available = engine_location(*state.engine_options.read().await).bundle_root.is_dir();
+    let options = state.engine_options.read().await.clone();
+    let engine_available = options.use_remote || engine_location(options).bundle_root.is_dir();
     Json(serde_json::json!({
         "status": "ok",
         "runtime": "native",
@@ -3711,7 +3726,7 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
         "engine_bundle_present": engine_available,
         "music_engine": {
             "id": PRIMARY_MUSIC_ENGINE_ID,
-            "base_url": state.music_server.base_url,
+            "base_url": state.music_server.get_base_url(),
             "reachable": engine_ready,
         }
     }))
@@ -3791,11 +3806,13 @@ async fn update_configuration(
 }
 
 async fn engine_options(State(state): State<AppState>) -> Json<Value> {
-    let options = *state.engine_options.read().await;
+    let options = state.engine_options.read().await.clone();
+    let is_remote_healthy = state.music_server.is_remote() && state.music_server.health().await;
     Json(serde_json::json!({
         "options": options,
         "effective_max_batch": options.effective_max_batch(),
-        "restart_required_to_apply": true,
+        "is_remote_healthy": is_remote_healthy,
+        "restart_required_to_apply": !options.use_remote,
     }))
 }
 
@@ -3817,16 +3834,23 @@ async fn update_engine_options(
     if request.vae_halo.is_some_and(|value| value > 256) {
         return Err(api_error(StatusCode::BAD_REQUEST, "vae_halo must be at most 256".into()));
     }
-    let changed = {
+    let (changed, use_remote, remote_url) = {
         let mut options = state.engine_options.write().await;
         let changed = *options != request;
-        *options = request;
-        changed
+        *options = request.clone();
+        (changed, request.use_remote, request.remote_url.clone())
     };
     let _ = persist_studio_settings(&state).await;
 
+    // Apply remote url configuration immediately to music_server client
+    if use_remote && remote_url.as_ref().is_some_and(|u| !u.trim().is_empty()) {
+        state.music_server.set_base_url(remote_url.unwrap());
+    } else if !use_remote {
+        state.music_server.set_base_url(format!("http://127.0.0.1:{}", music_engine::yue_server::DEFAULT_PORT));
+    }
+
     let mut restarted = false;
-    if changed && state.music_server.health().await {
+    if !use_remote && changed && state.music_server.health().await {
         restart_engine(&state).await.map_err(|error| api_error(StatusCode::SERVICE_UNAVAILABLE, error))?;
         restarted = true;
     }
@@ -3834,6 +3858,44 @@ async fn update_engine_options(
         "options": request,
         "effective_max_batch": request.effective_max_batch(),
         "engine_restarted": restarted,
+    })))
+}
+
+#[derive(Deserialize)]
+struct RemoteEngineTestRequest {
+    url: String,
+}
+
+async fn test_remote_engine(
+    Json(request): Json<RemoteEngineTestRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let clean = request.url.trim().trim_end_matches('/');
+    if clean.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Remote URL cannot be empty".into()));
+    }
+    let client = net::client();
+    let health_url = format!("{clean}/health");
+    let resp = client.get(&health_url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, format!("Could not reach remote engine at {health_url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(api_error(StatusCode::BAD_GATEWAY, format!("Remote engine returned status {}", resp.status())));
+    }
+    let props_url = format!("{clean}/props");
+    let props = client.get(&props_url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await
+        .ok()
+        .and_then(|r| r.json::<Value>().ok());
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "healthy": true,
+        "url": clean,
+        "props": props,
     })))
 }
 
@@ -3864,7 +3926,10 @@ async fn restart_engine(state: &AppState) -> Result<(), String> {
     // is not a slow start, it is no start at all. This is the path the studio
     // actually takes on launch, so the fetch belongs here rather than only in
     // the endpoint nothing calls.
-    let options = *state.engine_options.read().await;
+    let options = state.engine_options.read().await.clone();
+    if options.use_remote {
+        return Ok(());
+    }
     if options.backend == music_engine::yue_server::ComputeBackend::Cuda && hardware::hardware().cuda.is_none() {
         return Err("CUDA was chosen, but this card or its driver runs neither CUDA build of the engine: it needs an NVIDIA card from the GTX 900 series on and driver 525 or newer. Update the NVIDIA driver, or choose Vulkan in Settings.".into());
     }
@@ -4423,7 +4488,7 @@ fn load_studio_settings(path: &PathBuf) -> Option<PersistedStudioSettings> {
 
 async fn persist_studio_settings(state: &AppState) -> anyhow::Result<()> {
     let settings = PersistedStudioSettings {
-        engine_options: *state.engine_options.read().await,
+        engine_options: state.engine_options.read().await.clone(),
         assistant: state.assistant.read().await.clone(),
         lyrics_sync: state.lyrics_sync_config.read().await.clone(),
         configuration: state.configuration.read().await.clone(),
@@ -4464,22 +4529,33 @@ async fn compose_setup_status(state: &AppState, manager_status: model_manager::M
     let mut status = serde_json::to_value(manager_status).unwrap_or_else(|_| serde_json::json!({}));
     let selected_profile_id = state.selected_profile_id.read().await.clone();
     let selected_component_ids = state.selected_component_ids.read().await.clone();
-    let selected_set_ready = match (&selected_profile_id, &selected_component_ids) {
-        (_, Some(component_ids)) => state.model_manager.installed_component_files(component_ids).is_ok(),
-        (Some(profile_id), None) => state.model_manager.installed_profile_files(profile_id).is_ok(),
-        (None, None) => false,
+    let options = state.engine_options.read().await.clone();
+    let engine_ready = state.music_server.health().await;
+    let is_remote_active = options.use_remote && state.music_server.is_remote();
+    let selected_set_ready = if is_remote_active && engine_ready {
+        true
+    } else {
+        match (&selected_profile_id, &selected_component_ids) {
+            (_, Some(component_ids)) => state.model_manager.installed_component_files(component_ids).is_ok(),
+            (Some(profile_id), None) => state.model_manager.installed_profile_files(profile_id).is_ok(),
+            (None, None) => false,
+        }
     };
     if let Value::Object(ref mut fields) = status {
         fields.insert(
             "engine_ready".into(),
-            Value::Bool(state.music_server.health().await),
+            Value::Bool(engine_ready),
         );
+        fields.insert("is_remote".into(), Value::Bool(is_remote_active));
+        fields.insert("use_remote".into(), Value::Bool(options.use_remote));
+        fields.insert("remote_healthy".into(), Value::Bool(is_remote_active && engine_ready));
+        fields.insert("remote_url".into(), serde_json::to_value(&options.remote_url).unwrap_or(Value::Null));
         fields.insert("engine_id".into(), Value::String(PRIMARY_MUSIC_ENGINE_ID.into()));
         fields.insert("selected_profile_id".into(), serde_json::to_value(selected_profile_id).unwrap_or(Value::Null));
         fields.insert("selected_component_ids".into(), serde_json::to_value(selected_component_ids).unwrap_or(Value::Null));
         fields.insert("hardware".into(), serde_json::to_value(hardware::hardware()).unwrap_or(Value::Null));
-        fields.insert("engine_options".into(), serde_json::to_value(*state.engine_options.read().await).unwrap_or(Value::Null));
-        fields.insert("effective_max_batch".into(), Value::from(state.engine_options.read().await.effective_max_batch()));
+        fields.insert("engine_options".into(), serde_json::to_value(options.clone()).unwrap_or(Value::Null));
+        fields.insert("effective_max_batch".into(), Value::from(options.effective_max_batch()));
         // Where everything the studio owns actually lives. People complained
         // they could not find the ten gigabytes afterwards, let alone delete
         // them; the model root is already reported, this is the folder that
@@ -4493,7 +4569,7 @@ async fn compose_setup_status(state: &AppState, manager_status: model_manager::M
         // an engine that starts in three seconds and one that starts in ten
         // minutes. A spinner that says nothing for ten minutes is the same
         // screen as a spinner that is stuck.
-        let runtime_cuda = state.engine_options.read().await.cuda_build();
+        let runtime_cuda = options.cuda_build();
         let runtime_total = runtime_cuda.map(|build| engine_runtime::cublas_asset(build).bytes).unwrap_or(0);
         let runtime_active = state.engine_runtime.downloader().active().await;
         fields.insert(
@@ -7425,12 +7501,33 @@ async fn cancel_score_job(
 }
 
 impl EngineClient {
+    fn new(url: String) -> Self {
+        Self {
+            base_url: Arc::new(std::sync::RwLock::new(url.trim().trim_end_matches('/').to_owned())),
+            http: net::client(),
+            health_cache: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
     fn from_environment() -> Self {
         let base_url = env::var("YUE_ENGINE_BASE_URL")
-            .unwrap_or_else(|_| format!("http://127.0.0.1:{}", music_engine::yue_server::DEFAULT_PORT))
-            .trim_end_matches('/')
-            .to_owned();
-        Self { base_url, http: net::client(), health_cache: Arc::new(std::sync::Mutex::new(None)) }
+            .unwrap_or_else(|_| format!("http://127.0.0.1:{}", music_engine::yue_server::DEFAULT_PORT));
+        Self::new(base_url)
+    }
+
+    fn set_base_url(&self, url: String) {
+        let clean = url.trim().trim_end_matches('/').to_owned();
+        *self.base_url.write().unwrap_or_else(|p| p.into_inner()) = clean;
+        *self.health_cache.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    fn get_base_url(&self) -> String {
+        self.base_url.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    fn is_remote(&self) -> bool {
+        let url = self.get_base_url();
+        !url.is_empty() && !url.contains("127.0.0.1") && !url.contains("localhost")
     }
 
     async fn health(&self) -> bool {
@@ -7440,10 +7537,15 @@ impl EngineClient {
                 return up;
             }
         }
+        let timeout = if self.is_remote() {
+            std::time::Duration::from_secs(3)
+        } else {
+            std::time::Duration::from_millis(500)
+        };
         let up = self
             .http
             .get(self.url("/health"))
-            .timeout(std::time::Duration::from_millis(500))
+            .timeout(timeout)
             .send()
             .await
             .map(|response| response.status().is_success())
@@ -7529,7 +7631,7 @@ impl EngineClient {
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base_url)
+        format!("{}{path}", self.get_base_url())
     }
 }
 

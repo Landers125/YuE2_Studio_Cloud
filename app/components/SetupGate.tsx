@@ -841,6 +841,25 @@ export const SetupGate: React.FC<{ onReady?: () => void; mode?: 'first-run' | 's
           . {t('setupResumable')}
         </div>}
 
+        {mode === 'first-run' && (
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-3 text-xs dark:border-indigo-500/20 dark:bg-indigo-500/5">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold text-white">☁</span>
+              <div>
+                <span className="font-semibold text-zinc-800 dark:text-zinc-100">{t('setupColabOption')}</span>
+                <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">{t('setupColabHint')}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('yue:open-settings', { detail: 'engine' }))}
+              className="shrink-0 rounded-lg bg-indigo-600 px-3 py-1.5 font-semibold text-white hover:bg-indigo-500 transition-colors"
+            >
+              {t('colabRemoteTitle')}
+            </button>
+          </div>
+        )}
+
 
 
         {/* The engine itself: one row per role, one quantisation inside each. */}

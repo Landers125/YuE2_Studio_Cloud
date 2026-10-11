@@ -23,6 +23,8 @@ interface EngineOptions {
   clamp_fp16: boolean;
   /** The NVIDIA card by nvidia-smi index; null: the first. Taken at the studio's start. */
   gpu?: number | null;
+  remote_url?: string | null;
+  use_remote?: boolean;
 }
 
 const DEFAULTS: EngineOptions = {
@@ -35,6 +37,8 @@ const DEFAULTS: EngineOptions = {
   disable_flash_attention: false,
   clamp_fp16: false,
   gpu: null,
+  remote_url: null,
+  use_remote: false,
 };
 
 type NumberKey = 'max_batch' | 'max_seq' | 'vae_core' | 'vae_halo';
@@ -60,6 +64,31 @@ export const EngineSettings: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [testingRemote, setTestingRemote] = useState(false);
+  const [remoteTestResult, setRemoteTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const testRemoteConnection = async () => {
+    if (!options.remote_url) return;
+    setTestingRemote(true);
+    setRemoteTestResult(null);
+    try {
+      const response = await fetch('/engine/remote/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: options.remote_url }),
+      });
+      const body = await response.json();
+      if (response.ok && body.healthy) {
+        setRemoteTestResult({ ok: true, message: t('remoteConnectionSuccess') });
+      } else {
+        setRemoteTestResult({ ok: false, message: body?.error || t('remoteConnectionFailed') });
+      }
+    } catch (e) {
+      setRemoteTestResult({ ok: false, message: e instanceof Error ? e.message : t('remoteConnectionFailed') });
+    } finally {
+      setTestingRemote(false);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -161,6 +190,64 @@ export const EngineSettings: React.FC = () => {
 
   return (
     <div className="space-y-3">
+      {/* Google Colab / Remote Engine Section */}
+      <div className="rounded-xl border border-pink-500/25 bg-pink-500/5 p-3.5 dark:border-pink-500/25 dark:bg-pink-500/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-pink-500 text-xs font-bold text-white">⚡</span>
+            <span className="text-sm font-bold text-zinc-900 dark:text-white">{t('colabRemoteTitle')}</span>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={options.use_remote ?? false}
+              onChange={event => setOptions(current => ({ ...current, use_remote: event.target.checked }))}
+              className="h-4 w-4 accent-pink-500"
+            />
+            <span className="text-xs font-semibold text-pink-600 dark:text-pink-400">{t('useRemoteEngineLabel')}</span>
+          </label>
+        </div>
+        <p className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+          {t('useRemoteEngineHint')}
+        </p>
+
+        {options.use_remote && (
+          <div className="mt-3 space-y-2.5 border-t border-pink-500/15 pt-3">
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                {t('remoteEngineUrlLabel')}
+              </label>
+              <div className="mt-1 flex gap-2">
+                <input
+                  type="text"
+                  placeholder={t('remoteEngineUrlPlaceholder')}
+                  value={options.remote_url ?? ''}
+                  onChange={event => setOptions(current => ({ ...current, remote_url: event.target.value }))}
+                  className={CONTROL}
+                />
+                <button
+                  type="button"
+                  onClick={() => void testRemoteConnection()}
+                  disabled={!options.remote_url || testingRemote}
+                  className="shrink-0 rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
+                >
+                  {testingRemote ? <Loader2 size={13} className="animate-spin" /> : t('testRemoteConnection')}
+                </button>
+              </div>
+              <span className="mt-1 block text-[11px] text-zinc-500 dark:text-zinc-400">
+                {t('remoteEngineUrlHint')}
+              </span>
+            </div>
+
+            {remoteTestResult && (
+              <p className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${remoteTestResult.ok ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-rose-500/10 text-rose-700 dark:text-rose-300'}`}>
+                {remoteTestResult.ok ? <Check size={14} /> : <AlertTriangle size={14} />} {remoteTestResult.message}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
       <h4 className="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
         <Cpu size={16} className="text-pink-500" /> {t('localEngine')}
       </h4>

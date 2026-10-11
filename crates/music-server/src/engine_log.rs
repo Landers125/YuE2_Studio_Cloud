@@ -36,8 +36,13 @@ pub struct EngineLog {
 impl EngineLog {
     /// Follows the engine log at `url` from now on.
     pub fn follow(http: reqwest::Client, url: String) -> Self {
+        Self::follow_dynamic(http, Arc::new(move || url.clone()))
+    }
+
+    /// Follows the engine log dynamically querying `url_provider` on each reconnect.
+    pub fn follow_dynamic(http: reqwest::Client, url_provider: Arc<dyn Fn() -> String + Send + Sync>) -> Self {
         let log = Self { lines: Arc::default(), progress: Arc::new(watch::Sender::new(None)) };
-        tokio::spawn(log.clone().subscribe(http, url));
+        tokio::spawn(log.clone().subscribe(http, url_provider));
         log
     }
 
@@ -54,8 +59,9 @@ impl EngineLog {
             .map(|progress| Ok(Event::default().json_data(progress).expect("progress is plain data")))
     }
 
-    async fn subscribe(self, http: reqwest::Client, url: String) {
+    async fn subscribe(self, http: reqwest::Client, url_provider: Arc<dyn Fn() -> String + Send + Sync>) {
         loop {
+            let url = url_provider();
             if let Ok(response) = http.get(&url).send().await.and_then(reqwest::Response::error_for_status) {
                 // every subscriber is sent the engine's whole ring first
                 self.reset(Some(VecDeque::with_capacity(LINES)));

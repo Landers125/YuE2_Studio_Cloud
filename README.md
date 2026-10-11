@@ -11,6 +11,7 @@
 
 [![Project page](https://img.shields.io/badge/Project_page-timoncool.github.io-7c3aed?style=for-the-badge)](https://timoncool.github.io/YuE2-Studio/)
 [![Download](https://img.shields.io/badge/Download-Windows_x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/timoncool/YuE2-Studio/releases/latest)
+[![Open In Colab](https://img.shields.io/badge/Google_Colab-T4_GPU-F9AB00?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/timoncool/YuE2-Studio/blob/main/colab/YuE2_Studio_Colab_T4.ipynb)
 [![Donate](https://img.shields.io/badge/Support-Donate-ff69b4?style=for-the-badge)](DONATE.md)
 
 [![License](https://img.shields.io/github/license/timoncool/YuE2-Studio?style=flat-square)](LICENSE)
@@ -224,7 +225,10 @@ or download the MP3s from [docs/samples](docs/samples).
     vocals, and discrete AMD and Intel cards are untested. Reports from owners are welcome.
   - Without a GPU the engine falls back to the processor, which works but is many times
     slower.
-- 4–10 GB of disk for one model set.
+- **No powerful local GPU? Run on Google Colab (Tesla T4 16 GB):**
+  Offload the entire YuE2 inference engine to a free Google Colab instance. No local GPU or 10 GB weights download required on your computer. Simply start the notebook, copy the Cloudflare tunnel URL, and paste it into **Settings ➔ Engine ➔ Remote Engine URL**.
+  👉 [Detailed Google Colab Guide](docs/google-colab-t4-guide.md) · [Launch Notebook in Colab](https://colab.research.google.com/github/timoncool/YuE2-Studio/blob/main/colab/YuE2_Studio_Colab_T4.ipynb)
+- 4–10 GB of disk for one model set (not needed when using Google Colab).
 - Training a LoRA (optional): an NVIDIA RTX 30-series card or newer with 11 GB of VRAM
   and about 8 GB more disk for the trainer and its weights, downloaded only when you open
   training. Describing songs by ear needs about 12 GB of VRAM and 10 GB more disk for

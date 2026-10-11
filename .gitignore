@@ -30,3 +30,45 @@ desktop/src-tauri/tauri.release.conf.json
 *.password
 /target-check
 /_archive-*
+
+# Temporary testing files and media
+*.png
+*.jpg
+*.jpeg
+*.xml
+*.mp3
+*.wav
+*.zip
+*.apk
+*.log
+
+# Heavy portable folders & SDK tools
+jdk-17/
+android-tools/
+ACE-Step-Studio-*/
+YuE2-Studio-*-portable-*/
+
+# Kaggle temporary outputs and logs
+kernel_logs/
+kaggle_output/
+kaggle_last_output/
+kaggle_pulled/
+kaggle_log/
+scratch/
+
+# Android build outputs inside android-app
+android-app/**/build/
+android-app/.gradle/
+android-app/local.properties
+android-app/.idea/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Secrets and credentials
+**/kaggle.json
+**/kaggle*.json
+kaggle.json
+kaggle*.json

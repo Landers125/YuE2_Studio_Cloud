@@ -1,0 +1,17 @@
+{
+  "id": "jungterdai/yue2-music-synthesis-experiment",
+  "title": "YuE2 Music Synthesis Experiment",
+  "code_file": "main.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "jungterdai/yue2-q8-models"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
